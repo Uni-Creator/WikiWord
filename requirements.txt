@@ -1,0 +1,6 @@
+beautifulsoup4==4.12.3
+requests==2.31.0
+wikipedia-api==0.6.0
+sentence-transformers==3.0.1
+numpy==1.26.4
+scikit-learn==1.4.2

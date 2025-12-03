@@ -6,94 +6,72 @@ from crawler import extract_wikipedia_page
 from select_topics import pick_two
 
 
+def compute_similarity(target_page, candidates, model):
+    target_text = f"{target_page['title']}. {target_page['summary']}"
+    target_emb = model.encode([target_text])
+    target_emb = target_emb / np.linalg.norm(target_emb, axis=1, keepdims=True)
+
+    candidate_emb = model.encode(candidates)
+    candidate_emb = candidate_emb / np.linalg.norm(candidate_emb, axis=1, keepdims=True)
+
+    sim = cosine_similarity(target_emb, candidate_emb)[0]
+    idx = int(np.argmax(sim))
+    return candidates[idx], float(sim[idx])
 
 
-def compute_similarity(target_page, candidate_pages, model):
-    # Combine title and summary for embedding
-    text1 = f"{target_page['title']}. {target_page['summary']}"
-
-    # Generate embeddings
-    target_embeddings = model.encode([text1])
-    target_embeddings = target_embeddings / np.linalg.norm(target_embeddings, axis=1, keepdims=True)
-    
-    candidate_embeddings = model.encode(candidate_pages)
-    candidate_embeddings = candidate_embeddings / np.linalg.norm(candidate_embeddings, axis=1, keepdims=True)
-
-    
-    
-    # Compute cosine similarity
-    sim = cosine_similarity(target_embeddings, candidate_embeddings)[0]
-    best_idx = np.argmax(sim)
-    
-    if best_idx == -1:
-        return None
-    # Return the best matching candidate page
-    return candidate_pages[best_idx], float(sim[best_idx])
-
-def get_page(title):
-    if title in CACHE:
-        return CACHE[title]
+def get_page(title, cache):
+    if title in cache:
+        return cache[title]
     page = extract_wikipedia_page(title)
-    CACHE[title] = page
+    cache[title] = page
     return page
 
 
-if __name__ == "__main__":
-    # Pick two topics
-    # start_topic, target_page = pick_two()
-    start_topic, target_page = "Association football", "SpaceX"
-    print(f"Start Topic: {start_topic}")
-    print(f"End Topic: {target_page}")
-    
-    max_steps = 10
-    print(f"Max steps: {max_steps}")
-    
-    CACHE = {}
+def run_navigation(start_title, target_title, max_steps=15):
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    cache = {}
 
+    start_page = get_page(start_title, cache)
+    target_page = get_page(target_title, cache)
 
-    # Extract Wikipedia pages
-    start_page = get_page(start_topic)
-    target_page = get_page(target_page)
-    
     if not start_page or not target_page:
         print("Could not retrieve one of the pages.")
         sys.exit(1)
-        
+
     path = [start_page['title']]
 
-    # Load pre-trained model
-    model = SentenceTransformer('all-MiniLM-L6-v2')
-    
-    while start_page["title"] != target_page["title"] and max_steps > 0:
-        max_steps -= 1
-        print(f"Step {10 - max_steps}: {start_page['title']} -> {target_page['title']}")
-        
-        # If we reach the target page, break
-        if start_page['title'] == target_page['title']:
-            print("Reached target page!")
+    steps_left = max_steps
+    while start_page["title"] != target_page["title"] and steps_left > 0:
+        steps_left -= 1
+        print(f"Step {max_steps - steps_left}: {start_page['title']} -> {target_page['title']}")
+
+        links = start_page['internal_links']
+        if not links:
+            print("No internal links remaining.")
             break
-        
-        # If we run out of internal links, break
-        if not start_page['internal_links']:
-            print("No more internal links to follow.")
+
+        candidates = [link["title"] for link in links]
+
+        best_title, score = compute_similarity(target_page, candidates, model)
+        print(f"Best match: {best_title} (score={score:.4f})")
+        path.append(best_title)
+
+        if best_title == target_page['title']:
+            print("Target reached.")
             break
-    
-        # Prepare candidate pages from internal links of the start page
-        candidate_pages = []
-        for link in start_page['internal_links']:
-            candidate_pages.append(link["title"])
-            
-        if not candidate_pages:
-            print("No candidate pages found from the end topic.")
-            sys.exit(1)
-            
-        # print(candidate_pages[:10])
-        # Compute similarity and find the best matching page
-        best_match = compute_similarity(target_page, candidate_pages, model)
-        print(f"Best matching page to {target_page['title']} from links in {start_page['title']} :")
-        print(best_match)
-        
-        path.append(best_match[0])
-        start_page = get_page(best_match[0])
-        
-    
+
+        start_page = get_page(best_title, cache)
+
+    return path
+
+
+if __name__ == "__main__":
+    start, target = pick_two()
+    print(f"Start Topic: {start}")
+    print(f"End Topic: {target}")
+
+    final_path = run_navigation(start, target, max_steps=15)
+
+    print("\nFinal Path:")
+    for i, title in enumerate(final_path, start=1):
+        print(f"{i}. {title}")
